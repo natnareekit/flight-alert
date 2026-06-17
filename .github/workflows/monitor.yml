@@ -1,0 +1,52 @@
+name: IKEA Stock Monitor
+
+# Runs every 6 hours. Manual trigger also available from the Actions tab.
+on:
+  schedule:
+    - cron: '17 0,6,12,18 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ikea-stock-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Needed so the job can commit the `.notified` sentinel back to the repo
+      # after sending the first alert. No other write access is used.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Run stock monitor
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: npm start
+
+      - name: Commit sentinel if alert was sent
+        # Only commit when the script wrote .notified. This persists the
+        # "already alerted" state so future runs stay quiet without needing
+        # a cache or external store.
+        if: success()
+        run: |
+          if [ -f .notified ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .notified
+            git diff --cached --quiet || (
+              git commit -m "chore: mark IKEA stock alert as sent"
+              git push
+            )
+          else
+            echo "No sentinel to commit."
+          fi
